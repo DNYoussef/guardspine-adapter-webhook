@@ -67,7 +67,10 @@ export class WebhookHandler {
 
     try {
       await provider.validate(normalized, body);
-    } catch (err) {
+    } catch (err: unknown) {
+      if (err instanceof SignatureValidationError) {
+        throw err;
+      }
       const message = err instanceof Error ? err.message : String(err);
       throw new SignatureValidationError(provider.name, message);
     }

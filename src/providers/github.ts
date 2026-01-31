@@ -84,18 +84,7 @@ export class GitHubProvider implements WebhookProvider {
       event.author = extractString(payload, "pusher.name");
       const commits = payload.commits as Array<Record<string, unknown>> | undefined;
       if (Array.isArray(commits)) {
-        const files = new Set<string>();
-        for (const c of commits) {
-          for (const key of ["added", "removed", "modified"] as const) {
-            const arr = c[key];
-            if (Array.isArray(arr)) {
-              for (const f of arr) {
-                if (typeof f === "string") files.add(f);
-              }
-            }
-          }
-        }
-        event.changedFiles = [...files];
+        event.changedFiles = collectChangedFiles(commits);
       }
     } else if (rawEventType === "check_run") {
       const checkRun = payload.check_run as Record<string, unknown> | undefined;
@@ -109,6 +98,31 @@ export class GitHubProvider implements WebhookProvider {
   }
 }
 
+/**
+ * Collect unique changed file paths from an array of commit objects.
+ * Merges "added", "removed", and "modified" arrays across all commits.
+ */
+function collectChangedFiles(commits: Array<Record<string, unknown>>): string[] {
+  const files = new Set<string>();
+  for (const c of commits) {
+    for (const key of ["added", "removed", "modified"] as const) {
+      const arr = c[key];
+      if (Array.isArray(arr)) {
+        for (const f of arr) {
+          if (typeof f === "string") files.add(f);
+        }
+      }
+    }
+  }
+  return [...files];
+}
+
+/**
+ * Map a raw GitHub event type string to a normalized WebhookEvent eventType.
+ * Returns "unknown" for any unrecognized event type.
+ *
+ * @param raw - The raw event type string from the X-GitHub-Event header.
+ */
 function normalizeEventType(
   raw: string
 ): WebhookEvent["eventType"] {
@@ -124,7 +138,15 @@ function normalizeEventType(
   }
 }
 
+/**
+ * Safely extract a nested string property from an object using a dot-separated path.
+ * Returns undefined if the path does not resolve to a string value.
+ *
+ * @param obj - The root object to traverse.
+ * @param path - Dot-separated property path (e.g. "user.login").
+ */
 function extractString(obj: unknown, path: string): string | undefined {
+  if (obj == null || typeof obj !== "object") return undefined;
   let current: unknown = obj;
   for (const key of path.split(".")) {
     if (current == null || typeof current !== "object") return undefined;

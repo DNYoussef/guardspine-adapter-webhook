@@ -69,20 +69,26 @@ export class BundleEmitter {
    * or the bundle unchanged if not.
    */
   async sealBundle(bundle: EmittedBundle): Promise<EmittedBundle> {
+    let kernel: typeof import("@guardspine/kernel");
     try {
-      const kernel = await import("@guardspine/kernel");
-      // TODO: Full kernel integration requires converting EmittedBundle to
-      // EvidenceBundle format that kernel.sealBundle() expects. For now we
-      // only call sealBundle() if available and let it throw on shape mismatch
-      // so callers fall back to the unsealed path gracefully.
-      if (typeof kernel.sealBundle === "function") {
-        kernel.sealBundle(bundle);
-        return { ...bundle, sealed: true };
-      }
+      kernel = await import("@guardspine/kernel");
     } catch {
-      // kernel not available or bundle shape mismatch -- return unsealed
+      // @guardspine/kernel is an optional peer dependency -- return unsealed
+      return bundle;
     }
-    return bundle;
+
+    if (typeof kernel.sealBundle !== "function") {
+      return bundle;
+    }
+
+    try {
+      kernel.sealBundle(bundle);
+      return { ...bundle, sealed: true };
+    } catch (sealErr: unknown) {
+      // Bundle shape mismatch or sealing failure -- return unsealed.
+      // Callers can check bundle.sealed to detect this case.
+      return bundle;
+    }
   }
 
   private buildArtifactId(event: WebhookEvent): string {
@@ -171,6 +177,13 @@ export class BundleEmitter {
   }
 }
 
+/**
+ * Compute a prefixed SHA-256 hex digest of the given input string.
+ * This is a pure function with no side effects.
+ *
+ * @param input - The string to hash.
+ * @returns A string in the format "sha256:<hex_digest>".
+ */
 function sha256(input: string): string {
   return `sha256:${createHash("sha256").update(input, "utf8").digest("hex")}`;
 }

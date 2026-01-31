@@ -30,7 +30,7 @@ describe("BundleEmitter", () => {
     expect(bundle.provider).toBe("github");
     expect(bundle.sealed).toBe(false);
     expect(bundle.items.length).toBeGreaterThanOrEqual(2);
-    expect(bundle.chainHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(bundle.chainHash).toMatch(/^sha256:[a-f0-9]{64}$/);
   });
 
   it("uses SHA prefix for push events without PR", () => {
@@ -88,7 +88,7 @@ describe("BundleEmitter", () => {
     const diffItem = bundle.items.find((i) => i.kind === "diff");
     expect(diffItem).toBeDefined();
     expect(diffItem!.url).toBe("https://github.com/org/repo/pull/42.diff");
-    expect(diffItem!.contentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(diffItem!.contentHash).toMatch(/^sha256:[a-f0-9]{64}$/);
   });
 
   it("includes metadata evidence item", () => {

@@ -23,25 +23,38 @@ export class GenericProvider implements WebhookProvider {
     _headers: Record<string, string>,
     body: string
   ): Promise<WebhookEvent> {
-    const payload = JSON.parse(body) as Record<string, unknown>;
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(body) as Record<string, unknown>;
+    } catch {
+      throw new Error("GenericProvider: request body is not valid JSON");
+    }
+
+    if (payload == null || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("GenericProvider: request body must be a JSON object");
+    }
 
     return {
       provider: "generic",
       eventType: "unknown",
-      rawEventType: (payload.event_type as string) ?? "unknown",
-      repo: (payload.repo as string) ?? (payload.repository as string) ?? "unknown",
-      prNumber: payload.pr_number as number | undefined,
-      ref: payload.ref as string | undefined,
-      sha: payload.sha as string | undefined,
-      diffUrl: payload.diff_url as string | undefined,
-      author: payload.author as string | undefined,
+      rawEventType: typeof payload.event_type === "string" ? payload.event_type : "unknown",
+      repo: typeof payload.repo === "string"
+        ? payload.repo
+        : typeof payload.repository === "string"
+          ? payload.repository
+          : "unknown",
+      prNumber: typeof payload.pr_number === "number" ? payload.pr_number : undefined,
+      ref: typeof payload.ref === "string" ? payload.ref : undefined,
+      sha: typeof payload.sha === "string" ? payload.sha : undefined,
+      diffUrl: typeof payload.diff_url === "string" ? payload.diff_url : undefined,
+      author: typeof payload.author === "string" ? payload.author : undefined,
       labels: Array.isArray(payload.labels)
-        ? (payload.labels as string[])
+        ? (payload.labels as unknown[]).filter((l): l is string => typeof l === "string")
         : [],
       changedFiles: Array.isArray(payload.changed_files)
-        ? (payload.changed_files as string[])
+        ? (payload.changed_files as unknown[]).filter((f): f is string => typeof f === "string")
         : [],
-      action: payload.action as string | undefined,
+      action: typeof payload.action === "string" ? payload.action : undefined,
       timestamp: new Date().toISOString(),
       rawPayload: payload,
     };
