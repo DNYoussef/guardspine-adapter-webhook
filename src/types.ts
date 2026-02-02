@@ -75,7 +75,7 @@ export interface BundleEmitterConfig {
 }
 
 /**
- * An evidence item within a bundle.
+ * An evidence item within a bundle (pre-seal, built by the adapter).
  */
 export interface EvidenceItem {
   /** Type of evidence */
@@ -84,30 +84,51 @@ export interface EvidenceItem {
   summary: string;
   /** URL to the source, if available */
   url?: string;
+  /** The actual content that was hashed (used by kernel for chain computation) */
+  content: string;
   /** SHA-256 hash of the content */
   contentHash: string;
 }
 
 /**
- * An emitted evidence bundle ready for GuardSpine ingestion.
+ * A chain link returned by kernel.sealBundle().
+ */
+export interface ChainLink {
+  item_id: string;
+  content_type: string;
+  content_hash: string;
+  previous_hash: string;
+  sequence: number;
+}
+
+/**
+ * The immutability proof returned by kernel.sealBundle().
+ */
+export interface ImmutabilityProof {
+  hash_chain: ChainLink[];
+  root_hash: string;
+}
+
+/**
+ * An emitted evidence bundle ready for GuardSpine ingestion (v0.2.0).
  */
 export interface EmittedBundle {
+  /** Unique bundle identifier */
+  bundle_id: string;
   /** Schema version */
-  schemaVersion: "0.1.0";
+  version: "0.2.0";
   /** Unique artifact identifier (repo + PR/ref) */
   artifactId: string;
   /** Inferred risk tier */
   riskTier: string;
   /** Scope description */
   scope: string;
-  /** Evidence items */
+  /** Evidence items (as returned by kernel.sealBundle) */
   items: EvidenceItem[];
-  /** Hash chain: SHA-256 of all item hashes concatenated */
-  chainHash: string;
-  /** Whether the bundle was sealed with @guardspine/kernel */
-  sealed: boolean;
+  /** Cryptographic immutability proof from kernel (absent if kernel unavailable) */
+  immutability_proof?: ImmutabilityProof;
   /** ISO8601 creation timestamp */
-  createdAt: string;
+  created_at: string;
   /** Source provider name */
   provider: string;
 }

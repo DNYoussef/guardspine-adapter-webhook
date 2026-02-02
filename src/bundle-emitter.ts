@@ -1,20 +1,22 @@
 import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type {
   BundleEmitterConfig,
   EmittedBundle,
   EvidenceItem,
+  ImmutabilityProof,
   WebhookEvent,
 } from "./types.js";
 
 /**
  * Creates GuardSpine evidence bundles from normalized webhook events.
  *
- * If @guardspine/kernel is available, uses its seal() function
- * for cryptographic sealing. Otherwise, falls back to a basic SHA-256 hash chain.
+ * Uses @guardspine/kernel sealBundle() for cryptographic sealing when available.
+ * The kernel computes the hash chain (SHA-256 of sequence|item_id|content_type|content_hash|previous_hash).
+ * When kernel is unavailable, the bundle is emitted without an immutability_proof.
  */
 export class BundleEmitter {
   private readonly config: Required<BundleEmitterConfig>;
-  private sealFn: ((bundle: unknown) => unknown) | null = null;
 
   constructor(config: BundleEmitterConfig = {}) {
     this.config = {
@@ -22,50 +24,33 @@ export class BundleEmitter {
       riskPaths: config.riskPaths ?? {},
       riskLabels: config.riskLabels ?? {},
     };
-    this.tryLoadKernel();
-  }
-
-  /**
-   * Attempt to load @guardspine/kernel for sealing support.
-   * Fails silently -- kernel is an optional peer dependency.
-   */
-  private tryLoadKernel(): void {
-    try {
-      // Dynamic import would be async; we attempt a synchronous require-style probe.
-      // In ESM we cannot use require, so we mark seal as unavailable and
-      // let callers use sealBundle() for async sealing if needed.
-      this.sealFn = null;
-    } catch {
-      this.sealFn = null;
-    }
   }
 
   /**
    * Build an evidence bundle from a webhook event.
+   * Returns an unsealed bundle. Call sealBundle() to add immutability_proof.
    */
   fromEvent(event: WebhookEvent): EmittedBundle {
     const artifactId = this.buildArtifactId(event);
     const riskTier = this.inferRiskTier(event);
     const scope = this.buildScope(event);
     const items = this.buildItems(event);
-    const chainHash = this.computeChainHash(items);
 
     return {
-      schemaVersion: "0.1.0",
+      bundle_id: randomUUID(),
+      version: "0.2.0",
       artifactId,
       riskTier,
       scope,
       items,
-      chainHash,
-      sealed: false,
-      createdAt: new Date().toISOString(),
+      created_at: new Date().toISOString(),
       provider: event.provider,
     };
   }
 
   /**
-   * Attempt to seal a bundle using @guardspine/kernel.
-   * Returns the original bundle (with sealed=true) if kernel is available,
+   * Seal a bundle using @guardspine/kernel.
+   * Returns the bundle with immutability_proof if kernel is available,
    * or the bundle unchanged if not.
    */
   async sealBundle(bundle: EmittedBundle): Promise<EmittedBundle> {
@@ -82,11 +67,18 @@ export class BundleEmitter {
     }
 
     try {
-      kernel.sealBundle(bundle);
-      return { ...bundle, sealed: true };
-    } catch (sealErr: unknown) {
-      // Bundle shape mismatch or sealing failure -- return unsealed.
-      // Callers can check bundle.sealed to detect this case.
+      const sealed = kernel.sealBundle(bundle) as unknown as {
+        items: EvidenceItem[];
+        immutabilityProof: ImmutabilityProof;
+      };
+      return {
+        ...bundle,
+        items: sealed.items,
+        immutability_proof: sealed.immutabilityProof,
+      };
+    } catch {
+      // Bundle shape mismatch or sealing failure -- return without proof.
+      // Callers can check for immutability_proof presence to detect this.
       return bundle;
     }
   }
@@ -135,13 +127,17 @@ export class BundleEmitter {
   private buildItems(event: WebhookEvent): EvidenceItem[] {
     const items: EvidenceItem[] = [];
 
-    // Diff evidence
+    // Diff evidence -- hash the raw payload (actual diff content), not just the URL
     if (event.diffUrl) {
+      const diffContent = event.rawPayload
+        ? JSON.stringify(event.rawPayload)
+        : event.diffUrl;
       items.push({
         kind: "diff",
         summary: `Diff for ${event.repo}${event.prNumber != null ? ` #${event.prNumber}` : ""}`,
         url: event.diffUrl,
-        contentHash: sha256(event.diffUrl),
+        content: diffContent,
+        contentHash: sha256(diffContent),
       });
     }
 
@@ -156,24 +152,22 @@ export class BundleEmitter {
     items.push({
       kind: "metadata",
       summary: `Event metadata from ${event.provider}`,
+      content: metaPayload,
       contentHash: sha256(metaPayload),
     });
 
     // Check result evidence (for check_run events)
     if (event.eventType === "check_run" && event.rawPayload) {
+      const checkContent = JSON.stringify(event.rawPayload);
       items.push({
         kind: "check_result",
         summary: "CI check run result",
-        contentHash: sha256(JSON.stringify(event.rawPayload)),
+        content: checkContent,
+        contentHash: sha256(checkContent),
       });
     }
 
     return items;
-  }
-
-  private computeChainHash(items: EvidenceItem[]): string {
-    const concatenated = items.map((i) => i.contentHash).join("");
-    return sha256(concatenated);
   }
 }
 
