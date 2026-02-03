@@ -108,6 +108,24 @@ const sealed = await emitter.sealBundle(bundle);
 // sealed.sealed === true if kernel was available
 ```
 
+## Backend Import (v0.2.0)
+
+To post bundles to the GuardSpine backend import endpoint:
+
+```typescript
+import { buildImportBundle, postImportBundle } from "@guardspine/adapter-webhook";
+
+const bundle = emitter.fromEvent(event);
+const importBundle = await buildImportBundle(bundle);
+const result = await postImportBundle(importBundle, {
+  baseUrl: "http://localhost:8000",
+  token: process.env.GUARDSPINE_API_TOKEN,
+});
+```
+
+`buildImportBundle()` requires `@guardspine/kernel` to compute the hash chain
+and immutability proof. If the kernel is missing, it throws.
+
 ## API
 
 ### WebhookHandler

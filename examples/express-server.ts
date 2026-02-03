@@ -15,6 +15,8 @@ import {
   GitHubProvider,
   GitLabProvider,
   GenericProvider,
+  buildImportBundle,
+  postImportBundle,
 } from "../src/index.js";
 
 const app = express();
@@ -36,6 +38,16 @@ app.post("/webhook", async (req: { headers: Record<string, string>; body: string
   try {
     const event = await handler.handleRequest(req.headers, req.body);
     const bundle = emitter.fromEvent(event);
+    const baseUrl = process.env.GUARDSPINE_BASE_URL;
+    if (baseUrl) {
+      const importBundle = await buildImportBundle(bundle);
+      const result = await postImportBundle(importBundle, {
+        baseUrl,
+        token: process.env.GUARDSPINE_API_TOKEN,
+      });
+      res.json({ bundle: importBundle, importResult: result });
+      return;
+    }
     res.json(bundle);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Internal error";

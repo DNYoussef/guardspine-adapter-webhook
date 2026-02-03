@@ -50,20 +50,33 @@ export class BundleEmitter {
 
   /**
    * Seal a bundle using @guardspine/kernel.
-   * Returns the bundle with immutability_proof if kernel is available,
-   * or the bundle unchanged if not.
+   *
+   * SECURITY: This method now FAILS HARD if sealing cannot be performed.
+   * An unsealed bundle provides no integrity guarantees and should not
+   * be accepted by downstream systems.
+   *
+   * @throws Error if @guardspine/kernel is not installed
+   * @throws Error if kernel.sealBundle is not available
+   * @throws Error if sealing fails for any reason
    */
   async sealBundle(bundle: EmittedBundle): Promise<EmittedBundle> {
     let kernel: typeof import("@guardspine/kernel");
     try {
       kernel = await import("@guardspine/kernel");
-    } catch {
-      // @guardspine/kernel is an optional peer dependency -- return unsealed
-      return bundle;
+    } catch (err) {
+      // SECURITY: Fail hard - kernel is required for integrity guarantees
+      throw new Error(
+        "@guardspine/kernel is required for bundle sealing. " +
+        "Install with: npm install @guardspine/kernel"
+      );
     }
 
     if (typeof kernel.sealBundle !== "function") {
-      return bundle;
+      // SECURITY: Fail hard - kernel must provide sealBundle
+      throw new Error(
+        "@guardspine/kernel.sealBundle is not available. " +
+        "Ensure you have kernel version >= 0.1.0"
+      );
     }
 
     try {
@@ -76,10 +89,13 @@ export class BundleEmitter {
         items: sealed.items,
         immutability_proof: sealed.immutabilityProof,
       };
-    } catch {
-      // Bundle shape mismatch or sealing failure -- return without proof.
-      // Callers can check for immutability_proof presence to detect this.
-      return bundle;
+    } catch (err) {
+      // SECURITY: Fail hard - sealing errors must not be silenced
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Failed to seal bundle: ${message}. ` +
+        "Bundle integrity cannot be guaranteed."
+      );
     }
   }
 
@@ -130,7 +146,7 @@ export class BundleEmitter {
     // Diff evidence -- hash the raw payload (actual diff content), not just the URL
     if (event.diffUrl) {
       const diffContent = event.rawPayload
-        ? JSON.stringify(event.rawPayload)
+        ? canonicalJson(event.rawPayload)
         : event.diffUrl;
       items.push({
         kind: "diff",
@@ -142,7 +158,7 @@ export class BundleEmitter {
     }
 
     // Metadata evidence
-    const metaPayload = JSON.stringify({
+    const metaPayload = canonicalJson({
       repo: event.repo,
       author: event.author,
       sha: event.sha,
@@ -158,7 +174,7 @@ export class BundleEmitter {
 
     // Check result evidence (for check_run events)
     if (event.eventType === "check_run" && event.rawPayload) {
-      const checkContent = JSON.stringify(event.rawPayload);
+      const checkContent = canonicalJson(event.rawPayload);
       items.push({
         kind: "check_result",
         summary: "CI check run result",
@@ -180,4 +196,27 @@ export class BundleEmitter {
  */
 function sha256(input: string): string {
   return `sha256:${createHash("sha256").update(input, "utf8").digest("hex")}`;
+}
+
+/**
+ * Local canonical JSON implementation for pre-sealing content preparation.
+ *
+ * NOTE: This is used ONLY for building item content before sealBundle() is called.
+ * The actual hash chain hashes are computed by @guardspine/kernel which has
+ * its own RFC 8785-compliant implementation. This local version is kept for
+ * backward compatibility when preparing content, but the kernel's implementation
+ * is authoritative for all hash computations.
+ *
+ * TODO: Consider removing this once all callers use kernel directly.
+ */
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return "[" + value.map((item) => canonicalJson(item)).join(",") + "]";
+  }
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return "{" + keys.map((k) => JSON.stringify(k) + ":" + canonicalJson(obj[k])).join(",") + "}";
 }

@@ -8,7 +8,7 @@
  * Then configure your GitHub repo webhook to point at http://<host>:3900/
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { WebhookHandler, BundleEmitter, GitHubProvider } from "../src/index.js";
+import { WebhookHandler, BundleEmitter, GitHubProvider, buildImportBundle, postImportBundle } from "../src/index.js";
 
 const secret = process.env.GITHUB_WEBHOOK_SECRET;
 
@@ -56,6 +56,18 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     const bundle = emitter.fromEvent(event);
 
     console.log("Bundle created:", JSON.stringify(bundle, null, 2));
+
+    const baseUrl = process.env.GUARDSPINE_BASE_URL;
+    if (baseUrl) {
+      const importBundle = await buildImportBundle(bundle);
+      const result = await postImportBundle(importBundle, {
+        baseUrl,
+        token: process.env.GUARDSPINE_API_TOKEN,
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ bundle: importBundle, importResult: result }));
+      return;
+    }
 
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(bundle));
