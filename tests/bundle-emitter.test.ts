@@ -25,12 +25,11 @@ describe("BundleEmitter", () => {
     const emitter = new BundleEmitter();
     const bundle = emitter.fromEvent(makeEvent());
 
-    expect(bundle.schemaVersion).toBe("0.1.0");
+    expect(bundle.version).toBe("0.2.0");
     expect(bundle.artifactId).toBe("org-repo-pr-42");
     expect(bundle.provider).toBe("github");
-    expect(bundle.sealed).toBe(false);
     expect(bundle.items.length).toBeGreaterThanOrEqual(2);
-    expect(bundle.chainHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(bundle.immutability_proof).toBeUndefined();
   });
 
   it("uses SHA prefix for push events without PR", () => {
@@ -113,13 +112,14 @@ describe("BundleEmitter", () => {
     const event = makeEvent();
     const b1 = emitter.fromEvent(event);
     const b2 = emitter.fromEvent(event);
-    expect(b1.chainHash).toBe(b2.chainHash);
+    expect(b1.items).toEqual(b2.items);
   });
 
-  it("sealBundle returns unsealed when kernel unavailable", async () => {
+  it("sealBundle returns immutability proof when kernel available", async () => {
     const emitter = new BundleEmitter();
     const bundle = emitter.fromEvent(makeEvent());
     const result = await emitter.sealBundle(bundle);
-    expect(result.sealed).toBe(false);
+    expect(result.immutability_proof).toBeDefined();
+    expect(result.immutability_proof?.hash_chain?.length).toBeGreaterThan(0);
   });
 });

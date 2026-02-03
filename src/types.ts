@@ -132,3 +132,40 @@ export interface EmittedBundle {
   /** Source provider name */
   provider: string;
 }
+
+/**
+ * Import bundle item (spec-compatible shape).
+ */
+export interface ImportBundleItem {
+  item_id: string;
+  content_type: string;
+  content: unknown;
+  content_hash?: string;
+  sequence?: number;
+}
+
+/**
+ * Import bundle payload (v0.2.0) for /api/v1/bundles/import.
+ */
+export interface ImportBundle {
+  bundle_id: string;
+  version: "0.2.0";
+  created_at: string;
+  items: ImportBundleItem[];
+  immutability_proof?: ImmutabilityProof;
+  metadata?: Record<string, unknown>;
+}
+
+export interface GuardSpineImportOptions {
+  baseUrl: string;
+  token?: string;
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+}
+
+export interface GuardSpineImportResponse {
+  ok: boolean;
+  status: number;
+  data?: unknown;
+  error?: string;
+}

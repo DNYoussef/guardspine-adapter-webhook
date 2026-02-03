@@ -98,15 +98,33 @@ The `BundleEmitter` infers risk tiers in this order:
 2. **File paths** -- matched via `riskPaths` config (prefix match)
 3. **Default** -- falls back to `defaultRiskTier` (default: `"unknown"`)
 
+## Bundle Types
+
+This adapter produces two bundle types:
+
+| Type | Description | Use Case |
+|------|-------------|----------|
+| `EmittedBundle` | Pre-seal format with `kind`, `summary`, `contentHash` | Intermediate processing |
+| `ImportBundle` | v0.2.0 spec format with `content_type`, `immutability_proof` | Backend ingestion |
+
+**Important**: `EmittedBundle` is NOT spec-compliant. Use `buildImportBundle()` to convert
+to v0.2.0 format before sending to the backend.
+
 ## Bundle Sealing
 
-If `@guardspine/kernel` is installed, call `sealBundle()` for cryptographic sealing:
+Sealing requires `@guardspine/kernel`:
 
 ```typescript
 const bundle = emitter.fromEvent(event);
+
+// Option 1: Seal EmittedBundle (informational only, not spec-compliant)
 const sealed = await emitter.sealBundle(bundle);
-// sealed.sealed === true if kernel was available
+
+// Option 2: Build spec-compliant ImportBundle (recommended)
+const importBundle = await buildImportBundle(bundle);  // Requires kernel
 ```
+
+**Warning**: `sealBundle()` fails silently if the kernel is missing. Always check `sealed.sealed === true`.
 
 ## Backend Import (v0.2.0)
 

@@ -172,7 +172,7 @@ describe("GitLabProvider", () => {
 
 describe("GenericProvider", () => {
   it("always matches and passes through fields", async () => {
-    const handler = new WebhookHandler([new GenericProvider()]);
+    const handler = new WebhookHandler([new GenericProvider({ enabled: true })]);
     const body = JSON.stringify({
       repo: "custom/repo",
       author: "someone",
@@ -192,7 +192,7 @@ describe("Provider priority", () => {
   it("picks GitHub over Generic when GitHub headers present", async () => {
     const handler = new WebhookHandler([
       new GitHubProvider(),
-      new GenericProvider(),
+      new GenericProvider({ enabled: true }),
     ]);
     const event = await handler.handleRequest(
       { "x-github-event": "push" },
@@ -205,7 +205,7 @@ describe("Provider priority", () => {
     const handler = new WebhookHandler([
       new GitHubProvider(),
       new GitLabProvider(),
-      new GenericProvider(),
+      new GenericProvider({ enabled: true }),
     ]);
     const event = await handler.handleRequest(
       {},

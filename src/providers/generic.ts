@@ -1,14 +1,34 @@
 import type { WebhookEvent, WebhookProvider } from "../types.js";
 
+export interface GenericProviderOptions {
+  /**
+   * When true, the provider will match any request that no other provider handles.
+   * Defaults to false -- GenericProvider must be explicitly opted-in.
+   */
+  enabled?: boolean;
+}
+
 /**
  * Generic webhook provider -- pass-through for custom webhook sources.
- * Always matches (use as the last provider in the chain).
+ * Disabled by default; set `{ enabled: true }` to use as a catch-all fallback.
  * No signature validation.
  */
 export class GenericProvider implements WebhookProvider {
   readonly name = "generic";
+  private readonly enabled: boolean;
+
+  constructor(options: GenericProviderOptions = {}) {
+    this.enabled = options.enabled ?? false;
+  }
 
   matches(_headers: Record<string, string>): boolean {
+    if (!this.enabled) {
+      return false;
+    }
+    console.warn(
+      "GenericProvider matched a webhook request. This provider performs no signature validation. " +
+      "Ensure this is intentional."
+    );
     return true;
   }
 
