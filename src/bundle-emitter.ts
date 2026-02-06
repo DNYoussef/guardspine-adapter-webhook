@@ -75,18 +75,44 @@ export class BundleEmitter {
       // SECURITY: Fail hard - kernel must provide sealBundle
       throw new Error(
         "@guardspine/kernel.sealBundle is not available. " +
-        "Ensure you have kernel version >= 0.1.0"
+        "Ensure you have kernel version >= 0.2.0"
       );
     }
 
     try {
-      const sealed = kernel.sealBundle(bundle) as unknown as {
-        items: EvidenceItem[];
+      // Convert adapter-native items to canonical v0.2.0 item shape before sealing.
+      // This ensures chain binding includes item_id/content_type semantics and avoids
+      // leaking adapter-only fields into the cryptographic data model.
+      const draft = {
+        bundle_id: bundle.bundle_id,
+        version: "0.2.0" as const,
+        created_at: bundle.created_at,
+        items: bundle.items.map((item, idx) => ({
+          item_id: this.normalizeItemId(idx, item.kind),
+          content_type: this.contentTypeForKind(item.kind),
+          content: {
+            kind: item.kind,
+            summary: item.summary,
+            url: item.url,
+            content: item.content,
+          },
+        })),
+        metadata: {
+          artifact_id: bundle.artifactId,
+          risk_tier: bundle.riskTier,
+          scope: bundle.scope,
+          provider: bundle.provider,
+        },
+      };
+
+      const sealed = kernel.sealBundle(draft) as unknown as {
         immutabilityProof: ImmutabilityProof;
       };
+      if (!sealed?.immutabilityProof) {
+        throw new Error("Kernel sealing did not return immutability proof");
+      }
       return {
         ...bundle,
-        items: sealed.items,
         immutability_proof: sealed.immutabilityProof,
       };
     } catch (err) {
@@ -97,6 +123,14 @@ export class BundleEmitter {
         "Bundle integrity cannot be guaranteed."
       );
     }
+  }
+
+  private normalizeItemId(index: number, kind: string): string {
+    return `item-${index}-${kind}`;
+  }
+
+  private contentTypeForKind(kind: string): string {
+    return `guardspine/webhook/${kind}`;
   }
 
   private buildArtifactId(event: WebhookEvent): string {
