@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
 import type {
   BundleEmitterConfig,
+  BundleSanitizer,
   EmittedBundle,
   EvidenceItem,
   ImmutabilityProof,
@@ -59,7 +60,7 @@ export class BundleEmitter {
    * @throws Error if kernel.sealBundle is not available
    * @throws Error if sealing fails for any reason
    */
-  async sealBundle(bundle: EmittedBundle): Promise<EmittedBundle> {
+  async sealBundle(bundle: EmittedBundle, sanitizer?: BundleSanitizer): Promise<EmittedBundle> {
     let kernel: typeof import("@guardspine/kernel");
     try {
       kernel = await import("@guardspine/kernel");
@@ -80,6 +81,24 @@ export class BundleEmitter {
     }
 
     try {
+      // Sanitize items before sealing to prevent PII leaking into the
+      // cryptographic data model (same pattern as buildImportBundle path).
+      let items = bundle.items;
+      if (sanitizer) {
+        items = await Promise.all(
+          items.map(async (item) => {
+            const result = await sanitizer.sanitizeText(item.content, {
+              inputFormat: "json",
+              purpose: "webhook_payload",
+            });
+            if (result.changed) {
+              return { ...item, content: result.sanitizedText, contentHash: sha256(result.sanitizedText) };
+            }
+            return item;
+          })
+        );
+      }
+
       // Convert adapter-native items to canonical v0.2.0 item shape before sealing.
       // This ensures chain binding includes item_id/content_type semantics and avoids
       // leaking adapter-only fields into the cryptographic data model.
@@ -87,7 +106,7 @@ export class BundleEmitter {
         bundle_id: bundle.bundle_id,
         version: "0.2.0" as const,
         created_at: bundle.created_at,
-        items: bundle.items.map((item, idx) => ({
+        items: items.map((item, idx) => ({
           item_id: this.normalizeItemId(idx, item.kind),
           content_type: this.contentTypeForKind(item.kind),
           content: {

@@ -165,6 +165,43 @@ const importBundle = await buildImportBundle(bundle, {
 When enabled, bundles include a top-level `sanitization` attestation summary
 compatible with GuardSpine spec v0.2.1.
 
+## PII-Shield Integration
+
+The adapter-webhook integrates [PII-Shield](https://github.com/aragossa/pii-shield) to sanitize webhook payloads before converting them into evidence bundles.
+
+### Why
+
+Incoming webhook payloads from GitHub, GitLab, or custom providers may contain commit messages, branch names, file contents, or metadata that include secrets, API keys, or PII. Sanitizing before bundle sealing ensures these never persist in the cryptographic hash chain.
+
+### Where
+
+Sanitization runs at two points:
+
+| Phase | Function | File |
+|-------|----------|------|
+| **Import bundle creation** | `buildImportBundle()` | `src/importer.ts` |
+| **Emitted bundle sealing** | `BundleEmitter.sealBundle()` | `src/bundle-emitter.ts` |
+
+Both paths sanitize content BEFORE computing SHA-256 hashes, ensuring the hash chain covers the sanitized (safe) version.
+
+### How
+
+```typescript
+import { buildImportBundle, PIIShieldSanitizer } from "@guardspine/adapter-webhook";
+
+const sanitizer = new PIIShieldSanitizer({
+  endpoint: process.env.PII_SHIELD_ENDPOINT!,
+  apiKey: process.env.PII_SHIELD_API_KEY,
+});
+
+const importBundle = await buildImportBundle(bundle, {
+  sanitizer,
+  saltFingerprint: "sha256:your-org-fingerprint",
+});
+```
+
+When enabled, bundles include a top-level `sanitization` attestation (v0.2.1 format) with `input_hash` and `output_hash` covering ALL items in the bundle.
+
 ## API
 
 ### WebhookHandler

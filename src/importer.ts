@@ -40,12 +40,7 @@ export async function buildImportBundle(
   let items: ImportBundleItem[] = bundle.items.map((item, idx) => ({
     item_id: normalizeItemId(idx, item.kind),
     content_type: contentTypeForKind(item.kind),
-    content: {
-      kind: item.kind,
-      summary: item.summary,
-      url: item.url,
-      content: item.content,
-    },
+    content: item.content,
   }));
 
   let sanitization: SanitizationSummary | undefined;
@@ -54,6 +49,16 @@ export async function buildImportBundle(
     items = sanitized.items;
     sanitization = sanitized.summary;
   }
+
+  items = items.map((item, idx) => ({
+    ...item,
+    content: {
+      kind: bundle.items[idx].kind,
+      summary: bundle.items[idx].summary,
+      url: bundle.items[idx].url,
+      content: item.content,
+    },
+  }));
 
   let version: ImportBundle["version"] = sanitization ? "0.2.1" : "0.2.0";
 
@@ -190,6 +195,8 @@ async function sanitizeImportItems(
   };
 
   const sanitizedItems: ImportBundleItem[] = [];
+  const allRaw: string[] = [];
+  const allOutput: string[] = [];
   for (const item of items) {
     const raw = JSON.stringify(item.content);
     const result = await sanitizer.sanitizeText(raw, {
@@ -203,16 +210,8 @@ async function sanitizeImportItems(
     summary.method = result.method ?? summary.method;
     summary.redaction_count += result.redactionCount;
     summary.redactions_by_type = mergeCounts(summary.redactions_by_type, result.redactionsByType);
-    if (result.inputHash) {
-      summary.input_hash = result.inputHash;
-    } else if (!summary.input_hash) {
-      summary.input_hash = sha256(raw);
-    }
-    if (result.outputHash) {
-      summary.output_hash = result.outputHash;
-    } else if (!summary.output_hash) {
-      summary.output_hash = sha256(result.sanitizedText);
-    }
+    allRaw.push(raw);
+    allOutput.push(result.sanitizedText);
     if (result.changed) {
       summary.status = "sanitized";
     }
@@ -228,6 +227,9 @@ async function sanitizeImportItems(
 
     sanitizedItems.push({ ...item, content });
   }
+
+  summary.input_hash = sha256(allRaw.join(""));
+  summary.output_hash = sha256(allOutput.join(""));
 
   return { items: sanitizedItems, summary };
 }
