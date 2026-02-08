@@ -149,10 +149,11 @@ export interface ImportBundleItem {
  */
 export interface ImportBundle {
   bundle_id: string;
-  version: "0.2.0";
+  version: "0.2.0" | "0.2.1";
   created_at: string;
   items: ImportBundleItem[];
   immutability_proof?: ImmutabilityProof;
+  sanitization?: SanitizationSummary;
   metadata?: Record<string, unknown>;
 }
 
@@ -168,4 +169,53 @@ export interface GuardSpineImportResponse {
   status: number;
   data?: unknown;
   error?: string;
+}
+
+export interface SanitizerRequest {
+  inputFormat: "text" | "json" | "diff" | "markdown";
+  purpose?: string;
+  includeFindings?: boolean;
+}
+
+export interface SanitizerResult {
+  sanitizedText: string;
+  changed: boolean;
+  redactionCount: number;
+  redactionsByType: Record<string, number>;
+  engineName?: string;
+  engineVersion?: string;
+  method?: "deterministic_hmac" | "provider_native" | "entropy+hmac";
+  inputHash?: string;
+  outputHash?: string;
+}
+
+export interface BundleSanitizer {
+  sanitizeText(text: string, request: SanitizerRequest): Promise<SanitizerResult>;
+}
+
+export interface ImportBundleBuildOptions {
+  sanitizer?: BundleSanitizer;
+  saltFingerprint?: string;
+}
+
+export interface SanitizationSummary {
+  engine_name: string;
+  engine_version: string;
+  method: "deterministic_hmac" | "provider_native" | "entropy+hmac";
+  token_format: "[HIDDEN:<id>]";
+  salt_fingerprint: string;
+  redaction_count: number;
+  redactions_by_type: Record<string, number>;
+  status: "sanitized" | "none" | "partial" | "error";
+  input_hash?: string;
+  output_hash?: string;
+  applied_to?: Array<
+    | "ai_prompt"
+    | "pr_comment"
+    | "evidence_bundle"
+    | "sarif"
+    | "council_prompt"
+    | "webhook_payload"
+    | "docsync_pack"
+  >;
 }

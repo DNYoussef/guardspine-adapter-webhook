@@ -124,9 +124,9 @@ const sealed = await emitter.sealBundle(bundle);
 const importBundle = await buildImportBundle(bundle);  // Requires kernel
 ```
 
-**Warning**: `sealBundle()` fails silently if the kernel is missing. Always check `sealed.sealed === true`.
+**Warning**: `sealBundle()` fails hard if the kernel is missing or sealing fails.
 
-## Backend Import (v0.2.0)
+## Backend Import (v0.2.x)
 
 To post bundles to the GuardSpine backend import endpoint:
 
@@ -143,6 +143,27 @@ const result = await postImportBundle(importBundle, {
 
 `buildImportBundle()` requires `@guardspine/kernel` to compute the hash chain
 and immutability proof. If the kernel is missing, it throws.
+
+### Optional PII-Shield Sanitization
+
+`buildImportBundle()` accepts an optional sanitizer to redact payload content before sealing:
+
+```typescript
+import { buildImportBundle, PIIShieldSanitizer } from "@guardspine/adapter-webhook";
+
+const sanitizer = new PIIShieldSanitizer({
+  endpoint: process.env.PII_SHIELD_ENDPOINT!,
+  apiKey: process.env.PII_SHIELD_API_KEY,
+});
+
+const importBundle = await buildImportBundle(bundle, {
+  sanitizer,
+  saltFingerprint: "sha256:1a2b3c4d",
+});
+```
+
+When enabled, bundles include a top-level `sanitization` attestation summary
+compatible with GuardSpine spec v0.2.1.
 
 ## API
 

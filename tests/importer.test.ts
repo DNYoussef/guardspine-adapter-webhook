@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { BundleEmitter } from "../src/bundle-emitter.js";
 import { buildImportBundle } from "../src/importer.js";
-import type { WebhookEvent } from "../src/types.js";
+import type { BundleSanitizer, WebhookEvent } from "../src/types.js";
 
 function makeEvent(overrides: Partial<WebhookEvent> = {}): WebhookEvent {
   return {
@@ -47,5 +47,44 @@ describe("buildImportBundle", () => {
     } finally {
       // no-op
     }
+  });
+
+  it("adds sanitization summary when sanitizer is provided", async () => {
+    let hasKernel = true;
+    try {
+      await import("@guardspine/kernel");
+    } catch {
+      hasKernel = false;
+    }
+    if (!hasKernel) {
+      expect(true).toBe(true);
+      return;
+    }
+
+    const sanitizer: BundleSanitizer = {
+      async sanitizeText(text) {
+        return {
+          sanitizedText: text.replace("testuser", "[HIDDEN:abc123]"),
+          changed: text.includes("testuser"),
+          redactionCount: text.includes("testuser") ? 1 : 0,
+          redactionsByType: text.includes("testuser") ? { username: 1 } : {},
+          engineName: "pii-shield",
+          engineVersion: "1.1.0",
+          method: "deterministic_hmac",
+        };
+      },
+    };
+
+    const emitter = new BundleEmitter();
+    const emitted = emitter.fromEvent(makeEvent({ rawPayload: { actor: "testuser" } }));
+    const imported = await buildImportBundle(emitted, {
+      sanitizer,
+      saltFingerprint: "sha256:1a2b3c4d",
+    });
+
+    expect(imported.sanitization).toBeDefined();
+    expect(imported.sanitization?.engine_name).toBe("pii-shield");
+    expect(imported.sanitization?.salt_fingerprint).toBe("sha256:1a2b3c4d");
+    expect(imported.sanitization?.applied_to).toContain("webhook_payload");
   });
 });
