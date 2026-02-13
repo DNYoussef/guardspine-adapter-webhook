@@ -102,20 +102,29 @@ export class BundleEmitter {
       // Convert adapter-native items to canonical v0.2.0 item shape before sealing.
       // This ensures chain binding includes item_id/content_type semantics and avoids
       // leaking adapter-only fields into the cryptographic data model.
+      const normalizedItems = items.map((item, idx) => {
+        const content = {
+          kind: item.kind,
+          summary: item.summary,
+          url: item.url,
+          content: item.content,
+        };
+        // Compute content hash of the wrapper object as kernel does for the chain
+        const contentHash = sha256(canonicalJson(content));
+
+        return {
+          item_id: this.normalizeItemId(idx, item.kind),
+          content_type: this.contentTypeForKind(item.kind),
+          content_hash: contentHash,
+          content: content,
+        };
+      });
+
       const draft = {
         bundle_id: bundle.bundle_id,
         version: "0.2.0" as const,
         created_at: bundle.created_at,
-        items: items.map((item, idx) => ({
-          item_id: this.normalizeItemId(idx, item.kind),
-          content_type: this.contentTypeForKind(item.kind),
-          content: {
-            kind: item.kind,
-            summary: item.summary,
-            url: item.url,
-            content: item.content,
-          },
-        })),
+        items: normalizedItems,
         metadata: {
           artifact_id: bundle.artifactId,
           risk_tier: bundle.riskTier,
@@ -130,8 +139,26 @@ export class BundleEmitter {
       if (!sealed?.immutabilityProof) {
         throw new Error("Kernel sealing did not return immutability proof");
       }
+
+      // Updated normalized items with sequence and content_hash from the authoritative chain
+      const proofItems = normalizedItems.map((item) => {
+        const chainEntry = sealed.immutabilityProof.hash_chain.find(
+          (entry) => entry.item_id === item.item_id
+        );
+        if (!chainEntry) {
+          // Should not happen if kernel works correctly
+          throw new Error(`Kernel proof missing chain entry for item ${item.item_id}`);
+        }
+        return {
+          ...item,
+          content_hash: chainEntry.content_hash,
+          sequence: chainEntry.sequence,
+        };
+      });
+
       return {
         ...bundle,
+        items: proofItems,
         immutability_proof: sealed.immutabilityProof,
       };
     } catch (err) {

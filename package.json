@@ -13,7 +13,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
+    "test": "vitest run --pool=forks",
+    "test:polyglot": "vitest run tests/polyglot",
     "test:watch": "vitest"
   },
   "files": [
@@ -31,7 +32,7 @@
     }
   },
   "devDependencies": {
-    "@guardspine/kernel": "file:D:/Projects/guardspine-kernel",
+    "@guardspine/kernel": "file:../guardspine-kernel",
     "@types/node": "^25.1.0",
     "typescript": "^5.4.0",
     "vitest": "^2.0.0"
