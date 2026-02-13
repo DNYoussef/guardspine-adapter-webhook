@@ -9,7 +9,7 @@ importers:
   .:
     devDependencies:
       '@guardspine/kernel':
-        specifier: file:D:/Projects/guardspine-kernel
+        specifier: file:../guardspine-kernel
         version: file:../guardspine-kernel
       '@types/node':
         specifier: ^25.1.0
