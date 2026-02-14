@@ -151,7 +151,11 @@ and immutability proof. If the kernel is missing, it throws.
 ```typescript
 import { buildImportBundle, PIIShieldSanitizer } from "@guardspine/adapter-webhook";
 
-const sanitizer = new PIIShieldSanitizer({
+// WASM mode (default) -- no server needed
+const sanitizer = new PIIShieldSanitizer();
+
+// Or HTTP mode (legacy) -- connect to external PII-Shield server
+const httpSanitizer = new PIIShieldSanitizer({
   endpoint: process.env.PII_SHIELD_ENDPOINT!,
   apiKey: process.env.PII_SHIELD_API_KEY,
 });
@@ -169,6 +173,8 @@ compatible with GuardSpine spec v0.2.1.
 
 The adapter-webhook integrates [PII-Shield](https://github.com/aragossa/pii-shield) to sanitize webhook payloads before converting them into evidence bundles.
 
+As of February 2026, PII-Shield runs **in-process via WASM** -- no HTTP sidecar or external server required. The WASM binary (`lib/pii-shield.wasm`) is loaded at runtime using Node.js WASI support. The legacy HTTP mode remains available for existing deployments.
+
 ### Why
 
 Incoming webhook payloads from GitHub, GitLab, or custom providers may contain commit messages, branch names, file contents, or metadata that include secrets, API keys, or PII. Sanitizing before bundle sealing ensures these never persist in the cryptographic hash chain.
@@ -184,15 +190,22 @@ Sanitization runs at two points:
 
 Both paths sanitize content BEFORE computing SHA-256 hashes, ensuring the hash chain covers the sanitized (safe) version.
 
+### Execution Modes
+
+| Mode | Runtime | Server Required | Use Case |
+|------|---------|-----------------|----------|
+| **WASM** (default) | `node:wasm` via `wasm_exec.js` | No | CI/CD, serverless, airgapped |
+| **HTTP** (legacy) | HTTP client | Yes (sidecar/service) | Existing Kubernetes deployments |
+
+WASM mode loads `lib/pii-shield.wasm` (a Go binary compiled to WebAssembly) and runs Shannon entropy analysis entirely in-process. No network calls, no external dependencies.
+
 ### How
 
 ```typescript
 import { buildImportBundle, PIIShieldSanitizer } from "@guardspine/adapter-webhook";
 
-const sanitizer = new PIIShieldSanitizer({
-  endpoint: process.env.PII_SHIELD_ENDPOINT!,
-  apiKey: process.env.PII_SHIELD_API_KEY,
-});
+// WASM mode (default, recommended)
+const sanitizer = new PIIShieldSanitizer();
 
 const importBundle = await buildImportBundle(bundle, {
   sanitizer,
@@ -201,6 +214,14 @@ const importBundle = await buildImportBundle(bundle, {
 ```
 
 When enabled, bundles include a top-level `sanitization` attestation (v0.2.1 format) with `input_hash` and `output_hash` covering ALL items in the bundle.
+
+### Configuration
+
+| Environment Variable | Description |
+|---------------------|-------------|
+| `PII_SALT` | HMAC salt for deterministic redaction tokens. Must be org-wide. |
+| `PII_SAFE_REGEX_LIST` | JSON array of `[{"pattern": "...", "name": "..."}]` to whitelist safe high-entropy strings (e.g., Git SHAs, base64 config) |
+| `PII_ENTROPY_THRESHOLD` | Shannon entropy threshold for secret detection (default: 4.5) |
 
 ## API
 
