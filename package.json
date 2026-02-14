@@ -13,7 +13,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
+    "test": "vitest run --pool=forks",
+    "test:polyglot": "vitest run tests/polyglot",
     "test:watch": "vitest"
   },
   "files": [

@@ -1,119 +1,131 @@
-import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { openSync, readFileSync, writeFileSync, unlinkSync, closeSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID, createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+
+// @ts-ignore - node:wasi is available in node 20+ (might require flag in older versions)
+import { WASI } from "node:wasi";
+
 import type { BundleSanitizer, SanitizerRequest, SanitizerResult } from "../types.js";
 
-export interface PIIShieldSanitizerOptions {
-  endpoint: string;
+function sha256(text: string): string {
+  return "sha256:" + createHash("sha256").update(text).digest("hex");
+}
+
+export interface PIIShieldConfig {
+  /**
+   * Ignored in WASM mode (local execution)
+   */
+  endpoint?: string;
+  /**
+   * Ignored in WASM mode
+   */
   apiKey?: string;
+  /**
+   * Timeout in milliseconds for execution
+   */
   timeoutMs?: number;
 }
 
 export class PIIShieldSanitizer implements BundleSanitizer {
-  private readonly endpoint: string;
-  private readonly apiKey?: string;
-  private readonly timeoutMs: number;
+  private wasmPath: string;
 
-  constructor(options: PIIShieldSanitizerOptions) {
-    this.endpoint = options.endpoint;
-    this.apiKey = options.apiKey;
-    this.timeoutMs = options.timeoutMs ?? 5000;
+  constructor(private config: PIIShieldConfig) {
+    const __dirname = fileURLToPath(new URL(".", import.meta.url));
+    this.wasmPath = join(__dirname, "../../lib/pii-shield.wasm");
   }
 
   async sanitizeText(text: string, request: SanitizerRequest): Promise<SanitizerResult> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const id = randomUUID();
+    const inFile = join(tmpdir(), `pii_in_${id}`);
+    const outFile = join(tmpdir(), `pii_out_${id}`);
+    const errFile = join(tmpdir(), `pii_err_${id}`);
+
     try {
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (this.apiKey) {
-        headers.Authorization = `Bearer ${this.apiKey}`;
-      }
+      // Write input to temp file (Stdin)
+      // Ensure newline for line-based scanner in Go
+      const content = text.endsWith("\n") ? text : text + "\n";
+      writeFileSync(inFile, content);
 
-      const response = await fetch(this.endpoint, {
-        method: "POST",
-        headers,
-        signal: controller.signal,
-        body: JSON.stringify({
-          text,
-          input_format: request.inputFormat,
-          include_findings: request.includeFindings ?? false,
-          deterministic: true,
-          preserve_line_numbers: true,
-          purpose: request.purpose,
-        }),
+      // Open File Descriptors
+      // 0: stdin, 1: stdout, 2: stderr
+      const stdinFd = openSync(inFile, "r");
+      const stdoutFd = openSync(outFile, "w");
+      const stderrFd = openSync(errFile, "w");
+
+      // Initialize WASI
+      // Note: process.env inheritance satisfies user requirement
+      const wasi = new WASI({
+        args: ["pii-shield"],
+        env: process.env,
+        stdin: stdinFd,
+        stdout: stdoutFd,
+        stderr: stderrFd,
+        version: "preview1",
       });
-      if (!response.ok) {
-        throw new Error(`PII-Shield request failed (${response.status})`);
+
+      // Load and Instantiate WASM
+      const wasmBuffer = await readFile(this.wasmPath);
+      const wasmModule = await WebAssembly.compile(wasmBuffer);
+      const instance = await WebAssembly.instantiate(wasmModule, wasi.getImportObject());
+
+      // Run
+      // WASI start blocks until main exits (which happens when stdin EOF is reached)
+      try {
+        wasi.start(instance);
+      } catch (err: any) {
+        // Ignore exit code 0
+        if (err.code !== 0 && err.code !== "EFAULT") {
+          console.warn("WASI execution exited with", err);
+        }
       }
 
-      const body = (await response.json()) as Record<string, unknown>;
-      const sanitizedText =
-        (body.sanitized_text as string | undefined) ??
-        (body.redacted_text as string | undefined) ??
-        (body.text as string | undefined) ??
-        (body.output as string | undefined);
+      // Explicitly close FDs to flush
+      closeSync(stdinFd);
+      closeSync(stdoutFd);
+      closeSync(stderrFd);
 
-      if (typeof sanitizedText !== "string") {
-        throw new Error("PII-Shield response did not include sanitized_text");
+      // Read Output
+      let resultText = "";
+      try {
+        resultText = readFileSync(outFile, "utf-8");
+      } catch (readErr) {
+        console.error("Failed to read WASM output", readErr);
+        // Try to read stderr for debugging
+        try {
+          const errText = readFileSync(errFile, "utf-8");
+          if (errText) console.error("WASM Stderr:", errText);
+        } catch (e) { }
       }
 
-      const redactionsByType = extractRedactionsByType(body);
-      let redactionCount = Number(body.redaction_count ?? NaN);
-      if (!Number.isFinite(redactionCount)) {
-        redactionCount = Object.values(redactionsByType).reduce((sum, value) => sum + value, 0);
-      }
+      const sanitizedText = resultText.trim();
+      const changes = (sanitizedText !== text.trim());
+      const redactionCount = changes ? (sanitizedText.match(/\[HIDDEN/g) || []).length : 0;
 
       return {
         sanitizedText,
-        changed: sanitizedText !== text,
+        changed: changes,
         redactionCount,
-        redactionsByType,
-        engineName: "pii-shield",
-        engineVersion: (body.engine_version as string | undefined) ?? (body.schema_version as string | undefined),
-        method: "provider_native",
+        redactionsByType: {},
+        engineName: "pii-shield-wasm",
+        engineVersion: "1.0.0",
+        method: "wasm-in-process",
         inputHash: sha256(text),
         outputHash: sha256(sanitizedText),
       };
+
+    } catch (err) {
+      console.error("WASM Sanitization failed:", err);
+      throw err;
     } finally {
-      clearTimeout(timeout);
+      // Cleanup temp files
+      try {
+        if (inFile) unlinkSync(inFile);
+        if (outFile) unlinkSync(outFile);
+        if (errFile) unlinkSync(errFile);
+      } catch (ignored) { }
     }
   }
-}
-
-function extractRedactionsByType(body: Record<string, unknown>): Record<string, number> {
-  const raw = body.redactions_by_type;
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    const typed = raw as Record<string, unknown>;
-    const output: Record<string, number> = {};
-    for (const [key, value] of Object.entries(typed)) {
-      const count = Number(value);
-      if (Number.isFinite(count) && count >= 0) {
-        output[key] = Math.floor(count);
-      }
-    }
-    return output;
-  }
-
-  const redactions = body.redactions;
-  if (!Array.isArray(redactions)) {
-    return {};
-  }
-  const counts: Record<string, number> = {};
-  for (const entry of redactions) {
-    const label =
-      typeof entry === "object" && entry && !Array.isArray(entry)
-        ? String(
-            (entry as Record<string, unknown>).type ??
-              (entry as Record<string, unknown>).category ??
-              (entry as Record<string, unknown>).label ??
-              "unknown"
-          )
-        : "unknown";
-    counts[label] = (counts[label] ?? 0) + 1;
-  }
-  return counts;
-}
-
-function sha256(value: string): string {
-  return "sha256:" + createHash("sha256").update(value, "utf8").digest("hex");
 }

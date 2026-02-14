@@ -90,6 +90,19 @@ export interface EvidenceItem {
   contentHash: string;
 }
 
+export interface NormalizedEvidenceItem {
+  item_id: string;
+  content_type: string;
+  content_hash: string;
+  sequence: number;
+  content: {
+    kind: string;
+    summary: string;
+    url?: string;
+    content: string;
+  };
+}
+
 /**
  * A chain link returned by kernel.sealBundle().
  */
@@ -124,7 +137,7 @@ export interface EmittedBundle {
   /** Scope description */
   scope: string;
   /** Evidence items (as returned by kernel.sealBundle) */
-  items: EvidenceItem[];
+  items: EvidenceItem[] | NormalizedEvidenceItem[];
   /** Cryptographic immutability proof from kernel (absent if kernel unavailable) */
   immutability_proof?: ImmutabilityProof;
   /** ISO8601 creation timestamp */
@@ -184,7 +197,7 @@ export interface SanitizerResult {
   redactionsByType: Record<string, number>;
   engineName?: string;
   engineVersion?: string;
-  method?: "deterministic_hmac" | "provider_native" | "entropy+hmac";
+  method?: "deterministic_hmac" | "provider_native" | "entropy+hmac" | "wasm-in-process";
   inputHash?: string;
   outputHash?: string;
 }
@@ -201,7 +214,7 @@ export interface ImportBundleBuildOptions {
 export interface SanitizationSummary {
   engine_name: string;
   engine_version: string;
-  method: "deterministic_hmac" | "provider_native" | "entropy+hmac";
+  method: "deterministic_hmac" | "provider_native" | "entropy+hmac" | "wasm-in-process";
   token_format: "[HIDDEN:<id>]";
   salt_fingerprint: string;
   redaction_count: number;
