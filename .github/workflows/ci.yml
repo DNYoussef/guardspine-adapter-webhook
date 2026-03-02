@@ -14,6 +14,8 @@ jobs:
         node-version: [20, 22]
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: guardspine-adapter-webhook
       - uses: actions/checkout@v4
         with:
           repository: DNYoussef/guardspine-kernel
@@ -22,10 +24,14 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
+          cache-dependency-path: guardspine-adapter-webhook/package-lock.json
       - name: Build kernel dependency
         run: |
           cd guardspine-kernel
           npm ci
           npm run build
-      - run: npm ci
-      - run: npm test
+      - name: Install and test
+        working-directory: guardspine-adapter-webhook
+        run: |
+          npm ci
+          npm test
