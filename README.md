@@ -1,22 +1,53 @@
 # @guardspine/adapter-webhook
 
-Universal webhook adapter that converts GitHub, GitLab, Bitbucket, or custom webhook payloads into GuardSpine evidence bundles. Zero runtime dependencies.
+Universal webhook adapter that converts GitHub, GitLab, or custom webhook payloads into GuardSpine evidence bundles. Seals bundles cryptographically via `@guardspine/kernel` (TypeScript).
+
+Part of the [GuardSpine](https://guardspine.ai) open-core ecosystem. Apache-2.0.
+
+## How it works
+
+```
+Webhook POST
+    |
+    v
+WebhookHandler -- picks first matching provider
+    |
+    v
+Provider.validate() -- HMAC-SHA256 (GitHub) or token match (GitLab)
+Provider.parse()    -- normalizes payload into WebhookEvent
+    |
+    v
+BundleEmitter.fromEvent() -- builds EmittedBundle with risk tier, evidence items, SHA-256 hashes
+    |
+    v
+BundleEmitter.sealBundle()    -- seals via @guardspine/kernel sealBundle() (adds immutability_proof)
+  or buildImportBundle()      -- builds spec-compliant ImportBundle, seals, optionally sanitizes
+    |
+    v
+postImportBundle() -- POST to /api/v1/bundles/import
+```
+
+## Why the TypeScript kernel
+
+This adapter uses `@guardspine/kernel` (TypeScript) for `sealBundle()`. The TS kernel is the canonical implementation for TypeScript projects -- it computes the SHA-256 hash chain (`sequence|item_id|content_type|content_hash|previous_hash`) and returns the `immutability_proof` with `hash_chain` and `root_hash`. TypeScript consumers import it directly; there is no subprocess or FFI overhead.
 
 ## Install
 
 ```bash
-npm install @guardspine/adapter-webhook
+npm install @guardspine/adapter-webhook @guardspine/kernel
 ```
 
-Optional: install `@guardspine/kernel` for cryptographic bundle sealing.
+`@guardspine/kernel` is a peer dependency (optional at the type level, but required at runtime for sealing and import bundle creation).
 
-## Quick Start (GitHub Webhook)
+## Quick start
 
 ```typescript
 import {
   WebhookHandler,
   BundleEmitter,
   GitHubProvider,
+  buildImportBundle,
+  postImportBundle,
 } from "@guardspine/adapter-webhook";
 
 const handler = new WebhookHandler([
@@ -32,30 +63,47 @@ const emitter = new BundleEmitter({
 // In your HTTP handler:
 const event = await handler.handleRequest(headers, body);
 const bundle = emitter.fromEvent(event);
-// bundle is now a GuardSpine EmittedBundle ready for ingestion
-```
 
-See `examples/github-webhook.ts` for a complete node:http server.
+// Option A: Seal the EmittedBundle directly
+const sealed = await emitter.sealBundle(bundle);
+
+// Option B: Build a spec-compliant ImportBundle and POST it
+const importBundle = await buildImportBundle(bundle);
+const result = await postImportBundle(importBundle, {
+  baseUrl: "https://your-guardspine-backend",
+  token: process.env.GUARDSPINE_API_TOKEN,
+});
+```
 
 ## Providers
 
-| Provider | Class | Header Detection | Signature |
-|----------|-------|-----------------|-----------|
-| GitHub | `GitHubProvider` | `x-github-event` | HMAC-SHA256 (`x-hub-signature-256`) |
-| GitLab | `GitLabProvider` | `x-gitlab-event` | Token match (`x-gitlab-token`) |
-| Generic | `GenericProvider` | Always matches | None |
+| Provider | Class | Header detection | Signature validation |
+|----------|-------|-----------------|---------------------|
+| GitHub | `GitHubProvider` | `x-github-event` | HMAC-SHA256 via `x-hub-signature-256` |
+| GitLab | `GitLabProvider` | `x-gitlab-event` | Token match via `x-gitlab-token` |
+| Generic | `GenericProvider` | Catch-all (disabled by default) | None |
 
-Register providers in priority order. The first matching provider handles the request. Put `GenericProvider` last as a catch-all.
+Register providers in priority order. The first provider whose `matches()` returns true handles the request.
 
 ```typescript
 const handler = new WebhookHandler([
   new GitHubProvider({ secret: "..." }),
   new GitLabProvider({ secretToken: "..." }),
-  new GenericProvider(), // catch-all, always last
+  new GenericProvider({ enabled: true }), // catch-all, must opt in
 ]);
 ```
 
-## Custom Provider
+`GenericProvider` is disabled by default. Pass `{ enabled: true }` to use it. It performs no signature validation and logs a warning on every match.
+
+### GitHub events handled
+
+`pull_request`, `push`, `check_run`. Extracts PR number, SHA, diff URL, author, labels, and changed files.
+
+### GitLab events handled
+
+`Merge Request Hook` (normalized to `merge_request`), `Push Hook` (normalized to `push`). Extracts MR IID, SHA, diff URL, author, labels, and changed files.
+
+### Custom providers
 
 Implement the `WebhookProvider` interface:
 
@@ -70,7 +118,7 @@ class BitbucketProvider implements WebhookProvider {
   }
 
   async validate(headers: Record<string, string>, body: string): Promise<void> {
-    // Your validation logic
+    // Your signature validation
   }
 
   async parse(headers: Record<string, string>, body: string): Promise<WebhookEvent> {
@@ -80,7 +128,6 @@ class BitbucketProvider implements WebhookProvider {
       eventType: "pull_request",
       rawEventType: headers["x-event-key"],
       repo: payload.repository.full_name,
-      // ... fill remaining fields
       labels: [],
       changedFiles: [],
       timestamp: new Date().toISOString(),
@@ -90,151 +137,90 @@ class BitbucketProvider implements WebhookProvider {
 }
 ```
 
-## Risk Tier Inference
+## Risk tier inference
 
-The `BundleEmitter` infers risk tiers in this order:
+`BundleEmitter` infers risk tiers in priority order:
 
-1. **Labels** -- matched via `riskLabels` config (first match wins)
-2. **File paths** -- matched via `riskPaths` config (prefix match)
+1. **Labels** -- first match in `riskLabels` config wins
+2. **File paths** -- prefix match against `riskPaths` config
 3. **Default** -- falls back to `defaultRiskTier` (default: `"unknown"`)
 
-## Bundle Types
+## Bundle types
 
-This adapter produces two bundle types:
+| Type | Purpose | Spec-compliant |
+|------|---------|---------------|
+| `EmittedBundle` | Intermediate format with `kind`, `summary`, `contentHash` | No |
+| `ImportBundle` | v0.2.0/v0.2.1 format with `content_type`, `immutability_proof` | Yes |
 
-| Type | Description | Use Case |
-|------|-------------|----------|
-| `EmittedBundle` | Pre-seal format with `kind`, `summary`, `contentHash` | Intermediate processing |
-| `ImportBundle` | v0.2.0 spec format with `content_type`, `immutability_proof` | Backend ingestion |
+Use `buildImportBundle()` to convert an `EmittedBundle` into spec-compliant `ImportBundle` format before sending to the backend. Both `sealBundle()` and `buildImportBundle()` call `kernel.sealBundle()` internally.
 
-**Important**: `EmittedBundle` is NOT spec-compliant. Use `buildImportBundle()` to convert
-to v0.2.0 format before sending to the backend.
+## Evidence items
 
-## Bundle Sealing
+Each bundle contains evidence items extracted from the webhook payload:
 
-Sealing requires `@guardspine/kernel`:
+| Kind | When created | Content |
+|------|-------------|---------|
+| `diff` | Event has a `diffUrl` | Canonical JSON of the raw payload |
+| `metadata` | Always | Repo, author, SHA, labels, changed files |
+| `check_result` | `check_run` events only | Canonical JSON of the check run payload |
+
+All content is hashed with SHA-256 (prefixed `sha256:<hex>`) before sealing.
+
+## Bundle sealing
+
+Both sealing paths fail hard if the kernel is missing or sealing fails. There is no silent fallback to unsealed bundles.
 
 ```typescript
-const bundle = emitter.fromEvent(event);
-
-// Option 1: Seal EmittedBundle (informational only, not spec-compliant)
+// Direct seal (adds immutability_proof to EmittedBundle)
 const sealed = await emitter.sealBundle(bundle);
 
-// Option 2: Build spec-compliant ImportBundle (recommended)
-const importBundle = await buildImportBundle(bundle);  // Requires kernel
-```
-
-**Warning**: `sealBundle()` fails hard if the kernel is missing or sealing fails.
-
-## Backend Import (v0.2.x)
-
-To post bundles to the GuardSpine backend import endpoint:
-
-```typescript
-import { buildImportBundle, postImportBundle } from "@guardspine/adapter-webhook";
-
-const bundle = emitter.fromEvent(event);
+// Import bundle path (builds spec-compliant format + seals)
 const importBundle = await buildImportBundle(bundle);
-const result = await postImportBundle(importBundle, {
-  baseUrl: "http://localhost:8000",
-  token: process.env.GUARDSPINE_API_TOKEN,
-});
 ```
 
-`buildImportBundle()` requires `@guardspine/kernel` to compute the hash chain
-and immutability proof. If the kernel is missing, it throws.
+## PII sanitization (optional)
 
-### Optional PII-Shield Sanitization
-
-`buildImportBundle()` accepts an optional sanitizer to redact payload content before sealing:
+`PIIShieldSanitizer` runs PII-Shield via WASM in-process (no external server). Sanitization happens before SHA-256 hashing, so secrets never enter the hash chain.
 
 ```typescript
 import { buildImportBundle, PIIShieldSanitizer } from "@guardspine/adapter-webhook";
 
-// WASM mode (default) -- no server needed
-const sanitizer = new PIIShieldSanitizer();
-
-// Or HTTP mode (legacy) -- connect to external PII-Shield server
-const httpSanitizer = new PIIShieldSanitizer({
-  endpoint: process.env.PII_SHIELD_ENDPOINT!,
-  apiKey: process.env.PII_SHIELD_API_KEY,
-});
-
-const importBundle = await buildImportBundle(bundle, {
-  sanitizer,
-  saltFingerprint: "sha256:1a2b3c4d",
-});
-```
-
-When enabled, bundles include a top-level `sanitization` attestation summary
-compatible with GuardSpine spec v0.2.1.
-
-## PII-Shield Integration
-
-The adapter-webhook integrates [PII-Shield](https://github.com/aragossa/pii-shield) to sanitize webhook payloads before converting them into evidence bundles.
-
-As of February 2026, PII-Shield runs **in-process via WASM** -- no HTTP sidecar or external server required. The WASM binary (`lib/pii-shield.wasm`) is loaded at runtime using Node.js WASI support. The legacy HTTP mode remains available for existing deployments.
-
-### Why
-
-Incoming webhook payloads from GitHub, GitLab, or custom providers may contain commit messages, branch names, file contents, or metadata that include secrets, API keys, or PII. Sanitizing before bundle sealing ensures these never persist in the cryptographic hash chain.
-
-### Where
-
-Sanitization runs at two points:
-
-| Phase | Function | File |
-|-------|----------|------|
-| **Import bundle creation** | `buildImportBundle()` | `src/importer.ts` |
-| **Emitted bundle sealing** | `BundleEmitter.sealBundle()` | `src/bundle-emitter.ts` |
-
-Both paths sanitize content BEFORE computing SHA-256 hashes, ensuring the hash chain covers the sanitized (safe) version.
-
-### Execution Modes
-
-| Mode | Runtime | Server Required | Use Case |
-|------|---------|-----------------|----------|
-| **WASM** (default) | `node:wasm` via `wasm_exec.js` | No | CI/CD, serverless, airgapped |
-| **HTTP** (legacy) | HTTP client | Yes (sidecar/service) | Existing Kubernetes deployments |
-
-WASM mode loads `lib/pii-shield.wasm` (a Go binary compiled to WebAssembly) and runs Shannon entropy analysis entirely in-process. No network calls, no external dependencies.
-
-### How
-
-```typescript
-import { buildImportBundle, PIIShieldSanitizer } from "@guardspine/adapter-webhook";
-
-// WASM mode (default, recommended)
-const sanitizer = new PIIShieldSanitizer();
-
+const sanitizer = new PIIShieldSanitizer({});
 const importBundle = await buildImportBundle(bundle, {
   sanitizer,
   saltFingerprint: "sha256:your-org-fingerprint",
 });
 ```
 
-When enabled, bundles include a top-level `sanitization` attestation (v0.2.1 format) with `input_hash` and `output_hash` covering ALL items in the bundle.
+When sanitization is active, the bundle version is upgraded to `0.2.1` and includes a `sanitization` attestation with `input_hash`, `output_hash`, and redaction counts.
 
-### Configuration
+Sanitization also works with `sealBundle()` by passing a sanitizer as the second argument.
 
-| Environment Variable | Description |
-|---------------------|-------------|
-| `PII_SALT` | HMAC salt for deterministic redaction tokens. Must be org-wide. |
-| `PII_SAFE_REGEX_LIST` | JSON array of `[{"pattern": "...", "name": "..."}]` to whitelist safe high-entropy strings (e.g., Git SHAs, base64 config) |
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `PII_SALT` | HMAC salt for deterministic redaction tokens |
+| `PII_SAFE_REGEX_LIST` | JSON array of `[{"pattern": "...", "name": "..."}]` to whitelist safe high-entropy strings |
 | `PII_ENTROPY_THRESHOLD` | Shannon entropy threshold for secret detection (default: 4.5) |
 
-## API
+## API reference
 
 ### WebhookHandler
 
 - `constructor(providers: WebhookProvider[])` -- at least one provider required
-- `handleRequest(headers, body): Promise<WebhookEvent>` -- parse and validate
+- `handleRequest(headers, body): Promise<WebhookEvent>` -- validates and parses
 
 ### BundleEmitter
 
-- `constructor(config?: BundleEmitterConfig)` -- optional risk configuration
-- `fromEvent(event: WebhookEvent): EmittedBundle` -- create evidence bundle
-- `sealBundle(bundle: EmittedBundle): Promise<EmittedBundle>` -- seal with kernel
+- `constructor(config?: BundleEmitterConfig)` -- optional risk tier configuration
+- `fromEvent(event: WebhookEvent): EmittedBundle` -- build unsealed bundle
+- `sealBundle(bundle: EmittedBundle, sanitizer?: BundleSanitizer): Promise<EmittedBundle>` -- seal with kernel
+
+### Import functions
+
+- `buildImportBundle(bundle, options?): Promise<ImportBundle>` -- build spec-compliant sealed bundle
+- `postImportBundle(bundle, options): Promise<GuardSpineImportResponse>` -- POST to backend
 
 ### Errors
 
@@ -245,9 +231,11 @@ When enabled, bundles include a top-level `sanitization` attestation (v0.2.1 for
 
 ```bash
 npm install
-npm test
-npm run build
+npm test          # vitest
+npm run build     # tsc
 ```
+
+Requires Node.js >= 20. Uses ES modules (`"type": "module"`).
 
 ## License
 
