@@ -34,4 +34,5 @@ jobs:
         working-directory: guardspine-adapter-webhook
         run: |
           npm ci
+          npm install ../guardspine-kernel
           npx vitest run --pool=forks --exclude 'tests/polyglot/**'
