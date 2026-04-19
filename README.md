@@ -237,6 +237,8 @@ npm run build     # tsc
 
 Requires Node.js >= 20. Uses ES modules (`"type": "module"`).
 
+GuardSpine CodeGuard runs on pull requests for this repository.
+
 ## License
 
 Apache-2.0
