@@ -1,0 +1,13 @@
+NOTICE
+
+GuardSpine Webhook Adapter (c) 2026 GuardSpine, Inc.
+Licensed under the Business Source License 1.1. See LICENSE.
+
+This product includes PII-Shield (lib/pii-shield.wasm and integration code),
+authored by aragossa. PII-Shield was contributed under Apache License 2.0.
+A written confirmation that the PII-Shield code and the pii-shield.wasm binary
+may be redistributed under the Business Source License 1.1 is being obtained;
+until then those portions remain available under Apache License 2.0.
+
+This product includes wasm_exec.js, (c) The Go Authors, under the BSD-3-Clause
+license.

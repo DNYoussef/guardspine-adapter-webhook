@@ -9,7 +9,11 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 
 // Path to the guardspine-verify executable in the sibling directory's venv
-const VERIFIER_PATH = path.resolve(__dirname, '../../../guardspine-verify/.venv/bin/guardspine-verify');
+// (Windows venvs put console scripts in Scripts\*.exe, POSIX in bin/)
+const VENV_DIR = path.resolve(__dirname, '../../../guardspine-verify/.venv');
+const VERIFIER_PATH = process.platform === 'win32'
+    ? path.join(VENV_DIR, 'Scripts', 'guardspine-verify.exe')
+    : path.join(VENV_DIR, 'bin', 'guardspine-verify');
 
 describe('Polyglot Integration: Node Producer -> Python Consumer', () => {
     let tempDir: string;
