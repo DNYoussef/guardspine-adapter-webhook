@@ -32,7 +32,7 @@
     }
   },
   "devDependencies": {
-    "@guardspine/kernel": "github:DNYoussef/guardspine-kernel",
+    "@guardspine/kernel": "^2.0.0",
     "@types/node": "^25.1.0",
     "typescript": "^5.4.0",
     "vitest": "^2.0.0"
