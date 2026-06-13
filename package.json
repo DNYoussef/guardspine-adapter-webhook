@@ -22,7 +22,7 @@
     "LICENSE",
     "README.md"
   ],
-  "license": "Apache-2.0",
+  "license": "BUSL-1.1",
   "peerDependencies": {
     "@guardspine/kernel": ">=0.2.0"
   },
