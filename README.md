@@ -2,7 +2,7 @@
 
 Universal webhook adapter that converts GitHub, GitLab, or custom webhook payloads into GuardSpine evidence bundles. Seals bundles cryptographically via `@guardspine/kernel` (TypeScript).
 
-Part of the [GuardSpine](https://guardspine.ai) open-core ecosystem. Apache-2.0.
+Part of the [GuardSpine](https://guardspine.ai) ecosystem. Source-available under BSL 1.1.
 
 ## How it works
 
@@ -239,4 +239,4 @@ Requires Node.js >= 20. Uses ES modules (`"type": "module"`).
 
 ## License
 
-Apache-2.0
+Business Source License 1.1 (source-available) -- see [LICENSE](LICENSE). Free for non-commercial, evaluation, and small-organization use (annual revenue under USD 1,000,000); other production use requires a commercial license from GuardSpine, Inc. Each version converts to Apache-2.0 four years after its release.
